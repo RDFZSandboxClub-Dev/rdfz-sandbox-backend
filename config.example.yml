@@ -1,0 +1,4 @@
+logLevel: 'info'
+port: 8081
+dbPassword: 'demo'
+secretKey: 'demo'
