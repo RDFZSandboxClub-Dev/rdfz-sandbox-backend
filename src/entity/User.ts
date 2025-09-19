@@ -22,4 +22,22 @@ export class User {
 
     @Column("tinytext")
     minecraftId: string;
+
+    @Column("tinytext")
+    salt: string;
+
+    @Column("tinytext")
+    role: string;
+
+    @Column("tinyint")
+    isVerified: boolean;
+
+    @Column("tinytext")
+    createdAt: string;
+    
+    @Column("tinytext")
+    lastLoginAt: string;
+
+    @Column("longtext")
+    bio: string;
 }

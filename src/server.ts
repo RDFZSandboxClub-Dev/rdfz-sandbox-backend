@@ -6,7 +6,7 @@ import * as path from 'path';
 import { Config, type ConfigSchema } from "./config.js";
 import { DataSource, type EntityTarget, type QueryBuilder } from "typeorm";
 import { EventEmitter } from "events";
-import { AuthService } from "./auth.js";
+import { UserService } from "./user-service.js";
 
 export class Database implements DatabaseI {
 
@@ -95,7 +95,7 @@ export class AppServer implements AppServerI {
     private config: Config;
     private eventBus: EventEmitter;
     private database: DatabaseI;
-    private authService: AuthService;
+    private UserService: UserService;
 
     constructor() {
         // 先创建默认的 logger
@@ -132,7 +132,7 @@ export class AppServer implements AppServerI {
         this.expressApp = express();
         this.expressApp.use(express.json());
         this.moduleController = new ModuleController();
-        this.authService = new AuthService(this);
+        this.UserService = new UserService(this);
     }
 
     public loadModules(): void {

@@ -1,9 +1,9 @@
 import * as express from 'express';
 import * as log4js from 'log4js';
 import type { ConfigSchema } from './config.js';
-import type { Type } from 'typescript';
 import type { EntityTarget, QueryBuilder } from 'typeorm';
 import type EventEmitter from 'events';
+import type { User } from './entity/User.js';
 
 export interface Result<T> {
     success: boolean;
@@ -56,6 +56,7 @@ export type JWTPayload = {
     id: number
 }
 
-export interface AuthServiceI {
+export interface UserServiceI {
     getJWTPayload(token: string): Result<JWTPayload>;
+    getUserData(id: number): Promise<Result<User>>;
 }

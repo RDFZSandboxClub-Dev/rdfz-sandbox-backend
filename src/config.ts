@@ -14,7 +14,9 @@ const configSchema = z.strictObject({
     dbUsername: z.string().default('root').readonly(),
     dbPassword: z.string().default('admin').readonly(),
     dbName: z.string().default('rdfzscweb').readonly(),
-    secretKey: z.string().nonempty().readonly()
+    secretKey: z.string().nonempty().readonly(),
+    paginationMaxPageSize: z.number().default(10),
+    maxBioLength: z.number().default(1000000)
 })
 
 
