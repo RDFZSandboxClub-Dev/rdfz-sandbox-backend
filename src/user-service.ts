@@ -76,7 +76,7 @@ export class UserService implements UserServiceI {
                 r({ success: false, message: `Failed to get user data: ${err}` });
             }
         });
-        
+
     }
 
     private userMeHandler(req: Request, res: Response) {
@@ -104,8 +104,8 @@ export class UserService implements UserServiceI {
             }
 
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
                 return;
             }
 
@@ -116,7 +116,7 @@ export class UserService implements UserServiceI {
             }
 
             res.statusCode = 200;
-            res.json({ code: "SUCCESS", message: "操作成功", data: { id: '' + userResult.data!.id, username: userResult.data!.username, email: userResult.data!.email, grade: userResult.data!.grade, className: userResult.data!.className, minecraftId: userResult.data!.minecraftId, role: userResult.data!.role, isVerified: userResult.data!.isVerified, createdAt: userResult.data!.createdAt, lastLoginAt: userResult.data!.lastLoginAt }, traceId: "" });
+            res.json({ code: "SUCCESS", message: "操作成功", data: { id: '' + userResult.data!.id, username: userResult.data!.username, email: userResult.data!.email, grade: userResult.data!.grade, className: userResult.data!.className, minecraftId: userResult.data!.minecraftId, role: userResult.data!.role, isVerified: userResult.data!.isVerified, createdAt: userResult.data!.createdAt, lastLoginAt: userResult.data!.lastLoginAt, bio: userResult.data!.bio }, traceId: "" });
             return;
         });
     }
@@ -257,7 +257,7 @@ export class UserService implements UserServiceI {
                         const hashedPassword = crypto.createHash('md5').update(body.password + user.salt).digest('hex');
                         if (user.role == 'deleted') {
                             res.statusCode = 404;
-                            res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                            res.json({ code: "INVALID_CREDENTIALS", message: "无效的凭据", data: {}, traceId: "" });
                             return;
                         }
                         if (user.role == 'banned') {
@@ -307,9 +307,9 @@ export class UserService implements UserServiceI {
 
     public getJWTPayload(token: string): Result<JWTPayload> {
         try {
-            return { success: true, message: "Success", data: jwt.verify(token, this.appServer.getConfig().secretKey) as JWTPayload};
+            return { success: true, message: "Success", data: jwt.verify(token, this.appServer.getConfig().secretKey) as JWTPayload };
         }
-        catch(err) {
+        catch (err) {
             return { success: false, message: "Invalid token" };
         }
     }
@@ -338,15 +338,15 @@ export class UserService implements UserServiceI {
                 return;
             }
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
                 return;
             }
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
                 res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
                 return;
-            }   
+            }
             if (userResult.data!.role !== 'admin') {
                 res.statusCode = 403;
                 res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
@@ -359,7 +359,7 @@ export class UserService implements UserServiceI {
             if (pageSize > this.appServer.getConfig().paginationMaxPageSize) pageSize = this.appServer.getConfig().paginationMaxPageSize;
             this.appServer.getDatabase().createQueryBuilder(User, "user").select(["user.id", "user.username", "user.email", "user.grade", "user.className", "user.minecraftId", "user.role", "user.isVerified", "user.createdAt", "user.lastLoginAt", "user.bio"]).skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
                 res.statusCode = 200;
-                res.json({ code: "SUCCESS", message: "操作成功", data: { users: result[0], pagination: {total: result[1], page, limit: pageSize} }, traceId: "" });
+                res.json({ code: "SUCCESS", message: "操作成功", data: { users: result[0], pagination: { total: result[1], page, limit: pageSize } }, traceId: "" });
                 return;
             }).catch((err) => {
                 const traceId = crypto.randomUUID();
@@ -762,8 +762,8 @@ export class UserService implements UserServiceI {
                 return;
             }
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
                 return;
             }
 
