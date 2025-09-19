@@ -79,7 +79,7 @@ export class UserService implements UserServiceI {
         
     }
 
-    private async userMeHandler(req: Request, res: Response) {
+    private userMeHandler(req: Request, res: Response) {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
@@ -94,30 +94,31 @@ export class UserService implements UserServiceI {
             return;
         }
 
-        const userResult = await this.getUserData(payloadResult.data!.id);
-        if (!userResult.success) {
-            res.statusCode = 500;
-            const traceId = crypto.randomUUID();
-            this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-            res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
-            return;
-        }
+        this.getUserData(payloadResult.data!.id).then((userResult) => {
+            if (!userResult.success) {
+                res.statusCode = 500;
+                const traceId = crypto.randomUUID();
+                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
+                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                return;
+            }
 
-        if (userResult.data!.role == 'deleted') {
-            res.statusCode = 404;
-            res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
-            return;
-        }
+            if (userResult.data!.role == 'deleted') {
+                res.statusCode = 404;
+                res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                return;
+            }
 
-        if (userResult.data!.role == 'banned') {
-            res.statusCode = 403;
-            res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
-            return;
-        }
+            if (userResult.data!.role == 'banned') {
+                res.statusCode = 403;
+                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                return;
+            }
 
-        res.statusCode = 200;
-        res.json({ code: "SUCCESS", message: "操作成功", data: { id: '' + userResult.data!.id, username: userResult.data!.username, email: userResult.data!.email, grade: userResult.data!.grade, className: userResult.data!.className, minecraftId: userResult.data!.minecraftId, role: userResult.data!.role, isVerified: userResult.data!.isVerified, createdAt: userResult.data!.createdAt, lastLoginAt: userResult.data!.lastLoginAt }, traceId: "" });
-        return;
+            res.statusCode = 200;
+            res.json({ code: "SUCCESS", message: "操作成功", data: { id: '' + userResult.data!.id, username: userResult.data!.username, email: userResult.data!.email, grade: userResult.data!.grade, className: userResult.data!.className, minecraftId: userResult.data!.minecraftId, role: userResult.data!.role, isVerified: userResult.data!.isVerified, createdAt: userResult.data!.createdAt, lastLoginAt: userResult.data!.lastLoginAt }, traceId: "" });
+            return;
+        });
     }
 
     private registerHandler(req: Request, res: Response) {
