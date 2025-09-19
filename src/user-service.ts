@@ -54,6 +54,17 @@ export class UserService implements UserServiceI {
         })
     }
 
+    private selectFields(fieldsToSelect: string[], data: object): Record<string, any> {
+        return fieldsToSelect.reduce((acc, field) => {
+            if (field === 'id') {
+                acc[field] = '' + data![field];
+            } else {
+                acc[field] = data![field];
+            }
+            return acc;
+        }, {} as Record<string, any>);
+    }
+
     public getUserData(id: number): Promise<Result<User>> {
         return new Promise(r => {
             try {
@@ -116,7 +127,26 @@ export class UserService implements UserServiceI {
             }
 
             res.statusCode = 200;
-            res.json({ code: "SUCCESS", message: "操作成功", data: { id: '' + userResult.data!.id, username: userResult.data!.username, email: userResult.data!.email, grade: userResult.data!.grade, className: userResult.data!.className, minecraftId: userResult.data!.minecraftId, role: userResult.data!.role, isVerified: userResult.data!.isVerified, createdAt: userResult.data!.createdAt, lastLoginAt: userResult.data!.lastLoginAt, bio: userResult.data!.bio }, traceId: "" });
+            const fieldsToSend = [
+                'id',
+                'username',
+                'email',
+                'grade',
+                'className',
+                'minecraftId',
+                'role',
+                'isVerified',
+                'createdAt',
+                'lastLoginAt',
+                'bio'
+            ];
+
+            res.json({
+                code: "SUCCESS",
+                message: "操作成功",
+                data: this.selectFields(fieldsToSend, userResult.data!),
+                traceId: ""
+            });
             return;
         });
     }
@@ -418,16 +448,13 @@ export class UserService implements UserServiceI {
                     res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
                     return;
                 }
+                let fieldsToSend = ['id', 'username', 'grade', 'className', 'minecraftId', 'role', 'isVerified', 'createdAt', 'bio'];
                 if (userResult.data!.role === 'admin' || userResult.data!.id === id) {
-                    res.statusCode = 200;
-                    res.json({ code: "SUCCESS", message: "操作成功", data: { id: targetUserResult.data!.id, username: targetUserResult.data!.username, email: targetUserResult.data!.email, grade: targetUserResult.data!.grade, className: targetUserResult.data!.className, minecraftId: targetUserResult.data!.minecraftId, role: targetUserResult.data!.role, isVerified: targetUserResult.data!.isVerified, createdAt: targetUserResult.data!.createdAt, lastLoginAt: targetUserResult.data!.lastLoginAt, bio: targetUserResult.data!.bio }, traceId: "" });
-                    return;
+                    fieldsToSend.push('email', 'lastLoginAt');
                 }
-                else {
-                    res.statusCode = 200;
-                    res.json({ code: "SUCCESS", message: "操作成功", data: { id: targetUserResult.data!.id, username: targetUserResult.data!.username, grade: targetUserResult.data!.grade, className: targetUserResult.data!.className, minecraftId: targetUserResult.data!.minecraftId, role: targetUserResult.data!.role, isVerified: targetUserResult.data!.isVerified, createdAt: targetUserResult.data!.createdAt, bio: targetUserResult.data!.bio }, traceId: "" });
-                    return;
-                }
+                res.statusCode = 200;
+                res.json({ code: "SUCCESS", message: "操作成功", data: this.selectFields(fieldsToSend, userResult.data!), traceId: "" });
+                return;
             });
         });
     }
