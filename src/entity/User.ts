@@ -1,4 +1,5 @@
-import { Entity, PrimaryGeneratedColumn, Column } from "typeorm"
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany, type Relation } from "typeorm"
+import { PointRecord } from "./PointRecord.js";
 
 @Entity()
 export class User {
@@ -40,4 +41,10 @@ export class User {
 
     @Column("longtext")
     bio: string;
+
+    @OneToMany('PointRecord', 'user')
+    pointRecords: Relation<PointRecord>[];
+
+    @Column("int")
+    points: number;
 }

@@ -3,6 +3,8 @@ import type { AppServerI, UserServiceI, JWTPayload, Result } from "./types.js";
 import { User } from "./entity/User.js";
 import jwt from 'jsonwebtoken';
 import crypto from "crypto";
+import { GenRes, ResponseType } from "./utils.js";
+import { PointRecord } from "./entity/PointRecord.js";
 
 type RegisterRequest = {
     username: string;
@@ -21,6 +23,13 @@ type ChangePasswordRequest = {
 type LoginRequest = {
     email: string;
     password: string;
+}
+
+type AddPointsRequest = {
+    delta: number;
+    description: string;
+    relatedEntityType?: string;
+    relatedEntityId?: number;
 }
 
 export class UserService implements UserServiceI {
@@ -51,7 +60,13 @@ export class UserService implements UserServiceI {
         });
         this.appServer.getExpress().post('/api/auth/changepassword', (req: Request, res: Response) => {
             this.changePasswordHandler.call(this, req, res);
-        })
+        });
+        this.appServer.getExpress().get('/api/users/:id/points/record', (req: Request, res: Response) => {
+            this.getPointsRecordsHandler.call(this, req, res);
+        });
+        this.appServer.getExpress().post('/api/users/:id/points/add', (req: Request, res: Response) => {
+            this.addPointsHandler.call(this, req, res);
+        });
     }
 
     private selectFields(fieldsToSelect: string[], data: object): Record<string, any> {
@@ -64,6 +79,7 @@ export class UserService implements UserServiceI {
             return acc;
         }, {} as Record<string, any>);
     }
+
 
     public getUserData(id: number): Promise<Result<User>> {
         return new Promise(r => {
@@ -94,35 +110,33 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
 
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
 
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
                 res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
 
             if (userResult.data!.role == 'deleted') {
                 res.statusCode = 401;
-                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
 
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
 
@@ -138,7 +152,8 @@ export class UserService implements UserServiceI {
                 'isVerified',
                 'createdAt',
                 'lastLoginAt',
-                'bio'
+                'bio',
+                'points'
             ];
 
             res.json({
@@ -163,18 +178,18 @@ export class UserService implements UserServiceI {
                 body.username = body.username.toString().trim();
                 if (body.username.length > 255 || body.className.length > 255 || body.email.length > 255 || body.grade.length > 255 || body.minecraftId.length >= 16) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
             else {
                 res.statusCode = 400;
-                res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                 return;
             }
         } catch (err) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: { error: err }, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         //TODO email verify
@@ -183,7 +198,7 @@ export class UserService implements UserServiceI {
                 if (result.success) {
                     if (result.data && result.data.length > 0) {
                         res.statusCode = 409;
-                        res.json({ code: "USERNAME_ALREADY_EXISTS", message: "用户名已存在", data: {}, traceId: "" });
+                        res.json(GenRes.fail(ResponseType.USERNAME_ALREADY_EXISTS));
                         return;
                     }
                     else {
@@ -191,12 +206,12 @@ export class UserService implements UserServiceI {
                             if (result.success) {
                                 if (result.data && result.data.length > 0) {
                                     res.statusCode = 409;
-                                    res.json({ code: "EMAIL_ALREADY_USED", message: "邮箱已被占用", data: {}, traceId: "" });
+                                    res.json(GenRes.fail(ResponseType.EMAIL_ALREADY_USED));
                                     return;
                                 }
                                 else {
                                     const salt = crypto.randomUUID();
-                                    this.appServer.getDatabase().createQueryBuilder(User, "user").insert().into("User").values({
+                                    this.appServer.getDatabase().getDataSource().getRepository(User).createQueryBuilder("user").insert().into("User").values({
                                         username: body.username,
                                         email: body.email,
                                         password: crypto.createHash('md5').update(body.password + salt).digest('hex'),
@@ -208,51 +223,37 @@ export class UserService implements UserServiceI {
                                         isVerified: false,
                                         createdAt: new Date().toISOString(),
                                         lastLoginAt: new Date().toISOString(),
-                                        bio: ''
+                                        bio: '',
+                                        points: 0,
                                     }).execute().then(() => {
                                         this.appServer.getDatabase().query(User, { where: [{ email: body.email }] }).then((result) => {
                                             res.statusCode = 200;
-                                            res.json({ code: "SUCCESS", message: "注册成功", data: { token: jwt.sign({ id: result.data[0].id }, this.appServer.getConfig().secretKey, { expiresIn: '2h' }), user: { id: result.data[0].id, username: body.username, minecraftId: body.minecraftId } }, traceId: "" });
+                                            res.json(GenRes.success({ token: jwt.sign({ id: result.data[0].id }, this.appServer.getConfig().secretKey, { expiresIn: '2h' }), user: { id: result.data[0].id, username: body.username, minecraftId: body.minecraftId } }));
                                         })
                                         return;
                                     }).catch((error) => {
-                                        const traceId = crypto.randomUUID();
-                                        this.appServer.getLogger().error(`traceId: ${traceId} Failed to register user: ${error}`);
-                                        res.statusCode = 500;
-                                        res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                                        res.json(GenRes.error(error));
                                         return;
                                     });
                                 }
                             }
                             else {
-                                const traceId = crypto.randomUUID();
-                                this.appServer.getLogger().error(`traceId: ${traceId} Failed to register user: ${result.message}`);
-                                res.statusCode = 500;
-                                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                                res.json(GenRes.error(result.message));
                                 return;
                             }
                         });
                     }
                 }
                 else {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to register user: ${result.message}`);
-                    res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(result.message));
                     return;
                 }
             }).catch((err) => {
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId} Failed to register user: ${err}`);
-                res.statusCode = 500;
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(err));
                 return;
             });
         } catch (err) {
-            const traceId = crypto.randomUUID();
-            this.appServer.getLogger().error(`traceId: ${traceId} Failed to register user: ${err}`);
-            res.statusCode = 500;
-            res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+            res.json(GenRes.error(err));
             return;
         }
     }
@@ -265,18 +266,18 @@ export class UserService implements UserServiceI {
                 body.email = body.email.toString().trim();
                 if (body.email.length > 255) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
             else {
                 res.statusCode = 400;
-                res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                 return;
             }
         } catch (err) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: { error: err }, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         try {
@@ -287,50 +288,41 @@ export class UserService implements UserServiceI {
                         const hashedPassword = crypto.createHash('md5').update(body.password + user.salt).digest('hex');
                         if (user.role == 'deleted') {
                             res.statusCode = 404;
-                            res.json({ code: "INVALID_CREDENTIALS", message: "无效的凭据", data: {}, traceId: "" });
+                            res.json(GenRes.fail(ResponseType.INVALID_CREDENTIALS));
                             return;
                         }
                         if (user.role == 'banned') {
                             res.statusCode = 403;
-                            res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                            res.json(GenRes.fail(ResponseType.USER_BANNED));
                             return;
                         }
                         if (hashedPassword === user.password) {
                             res.statusCode = 200;
-                            res.json({ code: "SUCCESS", message: "登录成功", data: { token: jwt.sign({ id: user.id }, this.appServer.getConfig().secretKey, { expiresIn: '2h' }) }, traceId: "" });
+                            res.json(GenRes.success({ token: jwt.sign({ id: user.id }, this.appServer.getConfig().secretKey, { expiresIn: '2h' }) }));
                             return;
                         }
                         else {
                             res.statusCode = 401;
-                            res.json({ code: "INVALID_CREDENTIALS", message: "无效的凭据", data: {}, traceId: "" });
+                            res.json(GenRes.fail(ResponseType.INVALID_CREDENTIALS));
                             return;
                         }
                     }
                     else {
                         res.statusCode = 401;
-                        res.json({ code: "INVALID_CREDENTIALS", message: "无效的凭据", data: {}, traceId: "" });
+                        res.json(GenRes.fail(ResponseType.INVALID_CREDENTIALS));
                         return;
                     }
                 }
                 else {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to login user: ${result.message}`);
-                    res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(result.message));
                     return;
                 }
             }).catch((err) => {
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId} Failed to login user: ${err}`);
-                res.statusCode = 500;
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(err));
                 return;
             });
         } catch (err) {
-            const traceId = crypto.randomUUID();
-            this.appServer.getLogger().error(`traceId: ${traceId} Failed to login user: ${err}`);
-            res.statusCode = 500;
-            res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+            res.json(GenRes.error(err));
             return;
         }
     }
@@ -350,36 +342,34 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
                 res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
             if (userResult.data!.role == 'deleted') {
                 res.statusCode = 401;
-                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
             if (userResult.data!.role !== 'admin') {
                 res.statusCode = 403;
-                res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.FORBIDDEN));
                 return;
             }
             let page = parseInt(req.query.page as string) || 1;
@@ -387,15 +377,13 @@ export class UserService implements UserServiceI {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 10;
             if (pageSize > this.appServer.getConfig().paginationMaxPageSize) pageSize = this.appServer.getConfig().paginationMaxPageSize;
-            this.appServer.getDatabase().createQueryBuilder(User, "user").select(["user.id", "user.username", "user.email", "user.grade", "user.className", "user.minecraftId", "user.role", "user.isVerified", "user.createdAt", "user.lastLoginAt", "user.bio"]).skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
+            this.appServer.getDatabase().getDataSource().getRepository(User).createQueryBuilder("user").select(["user.id", "user.username", "user.email", "user.grade", "user.className", "user.minecraftId", "user.role", "user.isVerified", "user.createdAt", "user.lastLoginAt", "user.bio", "user.points"]).skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
                 res.statusCode = 200;
-                res.json({ code: "SUCCESS", message: "操作成功", data: { users: result[0], pagination: { total: result[1], page, limit: pageSize } }, traceId: "" });
+                res.json(GenRes.success({ users: result[0], pagination: { total: result[1], page, limit: pageSize } }));
                 return;
             }).catch((err) => {
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId} Failed to get users: ${err}`);
                 res.statusCode = 500;
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(err));
                 return;
             });
         });
@@ -408,52 +396,49 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const id = parseInt(req.params.id);
         if (isNaN(id) || id <= 0) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
-                res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "USER_NOT_FOUND", message: "没有权限", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
 
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
             this.getUserData(id).then((targetUserResult) => {
                 if (!targetUserResult.success) {
                     res.statusCode = 404;
-                    res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.USER_NOT_FOUND));
                     return;
                 }
-                let fieldsToSend = ['id', 'username', 'grade', 'className', 'minecraftId', 'role', 'isVerified', 'createdAt', 'bio'];
+                let fieldsToSend = ['id', 'username', 'grade', 'className', 'minecraftId', 'role', 'isVerified', 'createdAt', 'bio', 'points'];
                 if (userResult.data!.role === 'admin' || userResult.data!.id === id) {
                     fieldsToSend.push('email', 'lastLoginAt');
                 }
                 res.statusCode = 200;
-                res.json({ code: "SUCCESS", message: "操作成功", data: this.selectFields(fieldsToSend, userResult.data!), traceId: "" });
+                res.json(GenRes.success(this.selectFields(fieldsToSend, targetUserResult.data!)));
                 return;
             });
         });
@@ -466,29 +451,29 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const id = parseInt(req.params.id);
         if (isNaN(id) || id <= 0) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         let body: Partial<RegisterRequest> & { isVerified?: boolean; role?: string; bio?: string; };
         try {
-            body = req.body as Partial<RegisterRequest> & { isVerified?: boolean; role?: string };
+            body = req.body as Partial<RegisterRequest> & { isVerified?: boolean; role?: string; bio?: string; };
             if (body.username) {
                 body.username = body.username.toString().trim();
                 if (body.username.length > 255) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
@@ -496,7 +481,7 @@ export class UserService implements UserServiceI {
                 body.email = body.email.toString().trim();
                 if (body.email.length > 255) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
@@ -504,7 +489,7 @@ export class UserService implements UserServiceI {
                 body.grade = body.grade.toString().trim();
                 if (body.grade.length > 255) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
@@ -512,7 +497,7 @@ export class UserService implements UserServiceI {
                 body.className = body.className.toString().trim();
                 if (body.className.length > 255) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
@@ -520,7 +505,7 @@ export class UserService implements UserServiceI {
                 body.minecraftId = body.minecraftId.toString().trim();
                 if (body.minecraftId.length >= 16) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
@@ -528,44 +513,42 @@ export class UserService implements UserServiceI {
                 body.role = body.role.toString().trim();
                 if (body.role !== 'member' && body.role !== 'admin' && body.role !== 'banned' && body.role !== 'deleted') {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
             if (body.bio) {
                 if (body.bio.length > this.appServer.getConfig().maxBioLength) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
             if (body.password) {
                 res.statusCode = 400;
-                res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                 return;
             }
         } catch (err) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: { error: err }, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
                 res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "USER_NOT_FOUND", message: "没有权限", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
 
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
             // 查重: username, email 任意都不能有重复
@@ -574,22 +557,17 @@ export class UserService implements UserServiceI {
                     if (result.success) {
                         if (result.data && result.data.length > 0 && result.data[0].id !== id) {
                             res.statusCode = 409;
-                            res.json({ code: "USERNAME_ALREADY_EXISTS", message: "用户名已存在", data: {}, traceId: "" });
+                            res.json(GenRes.fail(ResponseType.USERNAME_ALREADY_EXISTS));
                             return;
                         }
                     }
                     else {
-                        const traceId = crypto.randomUUID();
-                        this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${result.message}`);
                         res.statusCode = 500;
-                        res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                        res.json(GenRes.error(result.message));
                         return;
                     }
                 }).catch((err) => {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${err}`);
-                    res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(err));
                     return;
                 });
             }
@@ -598,40 +576,34 @@ export class UserService implements UserServiceI {
                     if (result.success) {
                         if (result.data && result.data.length > 0 && result.data[0].id !== id) {
                             res.statusCode = 409;
-                            res.json({ code: "EMAIL_ALREADY_USED", message: "邮箱已被占用", data: {}, traceId: "" });
+                            res.json(GenRes.fail(ResponseType.EMAIL_ALREADY_USED));
                             return;
                         }
                     }
                     else {
-                        const traceId = crypto.randomUUID();
-                        this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${result.message}`);
-                        res.statusCode = 500;
-                        res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                        res.json(GenRes.error(result.message));
                         return;
                     }
                 }).catch((err) => {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${err}`);
-                    res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(err));
                     return;
                 });
             }
             this.getUserData(id).then((targetUserResult) => {
                 if (!targetUserResult.success) {
                     res.statusCode = 404;
-                    res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.USER_NOT_FOUND));
                     return;
                 }
                 if (userResult.data!.role !== 'admin' && userResult.data!.id !== id) {
                     res.statusCode = 403;
-                    res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.FORBIDDEN));
                     return;
                 }
                 if (body.role || body.isVerified !== undefined) {
                     if (userResult.data!.role !== 'admin') {
                         res.statusCode = 403;
-                        res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
+                        res.json(GenRes.fail(ResponseType.FORBIDDEN));
                         return;
                     }
                 }
@@ -646,20 +618,15 @@ export class UserService implements UserServiceI {
                 if (body.bio) updatedUser.bio = body.bio;
                 this.appServer.getDatabase().save(User, updatedUser).then((saveResult) => {
                     if (!saveResult.success) {
-                        const traceId = crypto.randomUUID();
-                        this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${saveResult.message}`);
                         res.statusCode = 500;
-                        res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                        res.json(GenRes.error(saveResult.message));
                         return;
                     }
                     res.statusCode = 200;
-                    res.json({ code: "SUCCESS", message: "操作成功", data: {}, traceId: "" });
+                    res.json(GenRes.success({}));
                     return;
                 }).catch((err) => {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to update user: ${err}`);
-                    res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(err));
                     return;
                 });
             });
@@ -672,73 +639,66 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const id = parseInt(req.params.id);
         if (isNaN(id) || id <= 0) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
                 res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
             if (userResult.data!.role == 'deleted') {
-                res.statusCode = 404;
-                res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
+                res.statusCode = 401;
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
 
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
             if (userResult.data!.role !== 'admin') {
                 res.statusCode = 403;
-                res.json({ code: "FORBIDDEN", message: "没有权限", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.FORBIDDEN));
                 return;
             }
             this.getUserData(id).then((targetUserResult) => {
                 if (!targetUserResult.success) {
                     res.statusCode = 404;
-                    res.json({ code: "USER_NOT_FOUND", message: "用户未找到", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.USER_NOT_FOUND));
                     return;
                 }
                 if (targetUserResult.data!.role === 'deleted') {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "用户已被删除", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.USER_NOT_FOUND));
                     return;
                 }
                 targetUserResult.data!.role = 'deleted';
                 this.appServer.getDatabase().save(User, targetUserResult.data!).then((saveResult) => {
                     if (!saveResult.success) {
-                        const traceId = crypto.randomUUID();
-                        this.appServer.getLogger().error(`traceId: ${traceId} Failed to delete user: ${saveResult.message}`);
-                        res.statusCode = 500;
-                        res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                        res.json(GenRes.error(saveResult.message));
                         return;
                     }
                     res.statusCode = 200;
-                    res.json({ code: "SUCCESS", message: "操作成功", data: {}, traceId: "" });
+                    res.json(GenRes.success({}));
                     return;
                 }).catch((err) => {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to delete user: ${err}`);
                     res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(err));
                     return;
                 });
             });
@@ -751,13 +711,13 @@ export class UserService implements UserServiceI {
         const token = req.headers.authorization?.replace("Bearer ", "");
         if (!token) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         const payloadResult = this.getJWTPayload(token);
         if (!payloadResult.success) {
             res.statusCode = 401;
-            res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
             return;
         }
         let body: ChangePasswordRequest;
@@ -766,43 +726,41 @@ export class UserService implements UserServiceI {
             if (body.oldPassword && body.newPassword) {
                 if (body.oldPassword.length === 0 || body.newPassword.length === 0) {
                     res.statusCode = 400;
-                    res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                     return;
                 }
             }
             else {
                 res.statusCode = 400;
-                res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
                 return;
             }
         } catch (err) {
             res.statusCode = 400;
-            res.json({ code: "BAD_REQUEST", message: "请求格式错误", data: { error: err }, traceId: "" });
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
             return;
         }
         this.getUserData(payloadResult.data!.id).then((userResult) => {
             if (!userResult.success) {
                 res.statusCode = 500;
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId}, message: ${userResult.message}`);
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(userResult.message));
                 return;
             }
             if (userResult.data!.role == 'deleted') {
                 res.statusCode = 401;
-                res.json({ code: "UNAUTHORIZED", message: "未授权", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
                 return;
             }
 
             if (userResult.data!.role == 'banned') {
                 res.statusCode = 403;
-                res.json({ code: "USER_BANNED", message: "用户已被封禁", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
                 return;
             }
             const hashedOldPassword = crypto.createHash('md5').update(body.oldPassword + userResult.data!.salt).digest('hex');
             if (hashedOldPassword !== userResult.data!.password) {
                 res.statusCode = 401;
-                res.json({ code: "INVALID_CREDENTIALS", message: "无效的凭据", data: {}, traceId: "" });
+                res.json(GenRes.fail(ResponseType.INVALID_CREDENTIALS));
                 return;
             }
             const newSalt = crypto.randomUUID();
@@ -810,20 +768,242 @@ export class UserService implements UserServiceI {
             userResult.data!.password = crypto.createHash('md5').update(body.newPassword + newSalt).digest('hex');
             this.appServer.getDatabase().save(User, userResult.data!).then((saveResult) => {
                 if (!saveResult.success) {
-                    const traceId = crypto.randomUUID();
-                    this.appServer.getLogger().error(`traceId: ${traceId} Failed to change password: ${saveResult.message}`);
                     res.statusCode = 500;
-                    res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                    res.json(GenRes.error(saveResult.message));
                     return;
                 }
                 res.statusCode = 200;
-                res.json({ code: "SUCCESS", message: "操作成功", data: {}, traceId: "" });
+                res.json(GenRes.success({}));
                 return;
             }).catch((err) => {
-                const traceId = crypto.randomUUID();
-                this.appServer.getLogger().error(`traceId: ${traceId} Failed to change password: ${err}`);
                 res.statusCode = 500;
-                res.json({ code: "INTERNAL_SERVER_ERROR", message: "服务器内部错误", data: {}, traceId });
+                res.json(GenRes.error(err));
+                return;
+            });
+        });
+    }
+
+    // Points management 
+
+    private getPointsRecordsHandler(req: Request, res: Response) {
+        // get point records with pagination
+        // if admin then get any user's records
+        // else get only his own records
+        // url /api/points/:id/records
+        const token = req.headers.authorization?.replace("Bearer ", "");
+        if (!token) {
+            res.statusCode = 401;
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+            return;
+        }
+        const payloadResult = this.getJWTPayload(token);
+        if (!payloadResult.success) {
+            res.statusCode = 401;
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+            return;
+        }
+        const id = parseInt(req.params.id);
+        if (isNaN(id) || id <= 0) {
+            res.statusCode = 400;
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+            return;
+        }
+        this.getUserData(payloadResult.data!.id).then((userResult) => {
+            if (!userResult.success) {
+                res.statusCode = 500;
+                res.json(GenRes.error(userResult.message));
+                return;
+            }
+            if (userResult.data!.role == 'deleted') {
+                res.statusCode = 401;
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+                return;
+            }
+
+            if (userResult.data!.role == 'banned') {
+                res.statusCode = 403;
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
+                return;
+            }
+            if (userResult.data!.role !== 'admin' && userResult.data!.id !== id) {
+                res.statusCode = 403;
+                res.json(GenRes.fail(ResponseType.FORBIDDEN));
+                return;
+            }
+            let page = parseInt(req.query.page as string) || 1;
+            let pageSize = parseInt(req.query.limit as string) || 10;
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 10;
+            if (pageSize > this.appServer.getConfig().paginationMaxPageSize) pageSize = this.appServer.getConfig().paginationMaxPageSize;
+            this.appServer.getDatabase().getDataSource().getRepository(PointRecord).createQueryBuilder("pointRecord").leftJoinAndSelect("pointRecord.user", "user").where("user.id = :userId", { userId: id }).select(["pointRecord.id", "pointRecord.points", "pointRecord.description", "pointRecord.relatedEntityType", "pointRecord.relatedEntityId", "pointRecord.createdAt"]).orderBy("pointRecord.createdAt", "DESC").skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
+                res.statusCode = 200;
+                res.json(GenRes.success({ records: result[0], pagination: { total: result[1], page, limit: pageSize } }));
+                return;
+            }).catch((err) => {
+                res.statusCode = 500;
+                res.json(GenRes.error(err));
+                return;
+            });
+        });
+    }
+
+    public addPoints(userId: number, delta: number, description: string, relatedEntityType?: string, relatedEntityId?: number): Promise<Result<null>> {
+        return new Promise(r => {
+            // update user points then create records
+            this.appServer.getDatabase().query(User, { where: [{ id: userId }] }).then((userResult) => {
+                if (!userResult.success) {
+                    r({ success: false, message: `Failed to get user data: ${userResult.message}` });
+                    return;
+                }
+                if (!userResult.data || userResult.data.length === 0) {
+                    r({ success: false, message: "User not found" });
+                    return;
+                }
+                const user = userResult.data[0];
+                user.points += delta;
+                this.appServer.getDatabase().save(User, user).then((saveResult) => {
+                    if (!saveResult.success) {
+                        r({ success: false, message: `Failed to update user points: ${saveResult.message}` });
+                        return;
+                    }
+                    const pointRecord = new PointRecord();
+                    pointRecord.user = user;
+                    pointRecord.points = delta;
+                    pointRecord.description = description;
+                    pointRecord.relatedEntityType = relatedEntityType || null;
+                    pointRecord.relatedEntityId = relatedEntityId || null;
+                    this.appServer.getDatabase().save(PointRecord, pointRecord).then((recordSaveResult) => {
+                        if (!recordSaveResult.success) {
+                            r({ success: false, message: `Failed to create point record: ${recordSaveResult.message}` });
+                            return;
+                        }
+                        r({ success: true, message: "Points updated and record created successfully", data: null });
+                        return;
+                    }).catch((err) => {
+                        r({ success: false, message: `Failed to create point record: ${err}` });
+                        return;
+                    });
+                }).catch((err) => {
+                    r({ success: false, message: `Failed to update user points: ${err}` });
+                    return;
+                });
+            }).catch((err) => {
+                r({ success: false, message: `Failed to get user data: ${err}` });
+                return;
+            });
+        });
+    }
+
+    public getPoints(userId: number): Promise<Result<number>> {
+        return new Promise(r => {
+            this.appServer.getDatabase().query(User, { where: [{ id: userId }] }).then((userResult) => {
+                if (!userResult.success) {
+                    r({ success: false, message: `Failed to get user data: ${userResult.message}` });
+                    return;
+                }
+                if (!userResult.data || userResult.data.length === 0) {
+                    r({ success: false, message: "User not found" });
+                    return;
+                }
+                const user = userResult.data[0];
+                r({ success: true, message: "Success", data: user.points });
+                return;
+            }).catch((err) => {
+                r({ success: false, message: `Failed to get user data: ${err}` });
+                return;
+            });
+        });
+    }
+
+    private addPointsHandler(req: Request, res: Response) {
+        // only admin can add points to users
+        const token = req.headers.authorization?.replace("Bearer ", "");
+        if (!token) {
+            res.statusCode = 401;
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+            return;
+        }
+        const payloadResult = this.getJWTPayload(token);
+        if (!payloadResult.success) {
+            res.statusCode = 401;
+            res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+            return;
+        }
+        const id = parseInt(req.params.id);
+        if (isNaN(id) || id <= 0) {
+            res.statusCode = 400;
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+            return;
+        }
+        let body: { delta: number; description: string; relatedEntityType?: string; relatedEntityId?: number; };
+        try {
+            body = req.body as { delta: number; description: string; relatedEntityType?: string; relatedEntityId?: number; };
+            if (body.delta === undefined || body.description === undefined) {
+                res.statusCode = 400;
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+                return;
+            }
+            if (typeof body.delta !== 'number' || isNaN(body.delta) || body.delta === 0) {
+                res.statusCode = 400;
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+                return;
+            }
+            if (typeof body.description !== 'string' || body.description.trim().length === 0 || body.description.length > 255) {
+                res.statusCode = 400;
+                res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+                return;
+            }
+            body.description = body.description.trim();
+            if (body.relatedEntityType) {
+                if (typeof body.relatedEntityType !== 'string' || body.relatedEntityType.trim().length === 0 || body.relatedEntityType.length > 50) {
+                    res.statusCode = 400;
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+                    return;
+                }
+                body.relatedEntityType = body.relatedEntityType.trim();
+            }
+            if (body.relatedEntityId) {
+                if (typeof body.relatedEntityId !== 'number' || isNaN(body.relatedEntityId) || body.relatedEntityId <= 0) {
+                    res.statusCode = 400;
+                    res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+                    return;
+                }
+            }
+        } catch (err) {
+            res.statusCode = 400;
+            res.json(GenRes.fail(ResponseType.BAD_REQUEST));
+            return;
+        }
+        this.getUserData(payloadResult.data!.id).then((userResult) => {
+            if (!userResult.success) {
+                res.statusCode = 500;
+                res.json(GenRes.error(userResult.message));
+                return;
+            }
+            if (userResult.data!.role == 'deleted') {
+                res.statusCode = 401;
+                res.json(GenRes.fail(ResponseType.UNAUTHORIZED));
+                return;
+            }
+
+            if (userResult.data!.role == 'banned') {
+                res.statusCode = 403;
+                res.json(GenRes.fail(ResponseType.USER_BANNED));
+                return;
+            }
+            if (userResult.data!.role !== 'admin') {
+                res.statusCode = 403;
+                res.json(GenRes.fail(ResponseType.FORBIDDEN));
+                return;
+            }
+            this.addPoints(id, body.delta, body.description, body.relatedEntityType, body.relatedEntityId).then((addResult) => {
+                if (!addResult.success) {
+                    res.statusCode = 500;
+                    res.json(GenRes.error(addResult.message));
+                    return;
+                }
+                res.statusCode = 200;
+                res.json(GenRes.success({}));
                 return;
             });
         });

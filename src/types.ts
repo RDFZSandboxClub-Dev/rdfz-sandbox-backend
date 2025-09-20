@@ -1,7 +1,7 @@
 import * as express from 'express';
 import * as log4js from 'log4js';
 import type { ConfigSchema } from './config.js';
-import type { EntityTarget, QueryBuilder } from 'typeorm';
+import type { DataSource, EntityTarget } from 'typeorm';
 import type EventEmitter from 'events';
 import type { User } from './entity/User.js';
 
@@ -49,7 +49,7 @@ export interface DatabaseI {
     query<T>(target: EntityTarget<T>, params?: object): Promise<Result<T[]>>;
     save<T>(target: EntityTarget<T>, item: T): Promise<Result<undefined>>;
     remove<T>(target: EntityTarget<T>, item: T): Promise<Result<undefined>>;
-    createQueryBuilder<T>(target: EntityTarget<T>, alias: string): QueryBuilder<T>;
+    getDataSource(): DataSource;
 }
 
 export type JWTPayload = {
@@ -59,4 +59,5 @@ export type JWTPayload = {
 export interface UserServiceI {
     getJWTPayload(token: string): Result<JWTPayload>;
     getUserData(id: number): Promise<Result<User>>;
+    addPoints(userId: number, delta: number, description: string, relatedEntityType?: string, relatedEntityId?: number): Promise<Result<null>>;
 }

@@ -1,6 +1,6 @@
 import * as log4js from "log4js";
 import express from 'express';
-import type { AppServerI, DatabaseI, ModuleControllerI, Result } from "./types.js";
+import type { AppServerI, DatabaseI, ModuleControllerI, Result, UserServiceI } from "./types.js";
 import { ModuleController } from "./module-controller.js";
 import * as path from 'path';
 import { Config, type ConfigSchema } from "./config.js";
@@ -82,8 +82,8 @@ export class Database implements DatabaseI {
         });
     }
 
-    createQueryBuilder<T>(target: EntityTarget<T>, alias: string): QueryBuilder<T> {
-        return this.dataSource.getRepository(target).createQueryBuilder(alias);
+    getDataSource() {
+        return this.dataSource;
     }
 
 }
@@ -168,5 +168,9 @@ export class AppServer implements AppServerI {
 
     public getDatabase(): DatabaseI {
         return this.database;
+    }
+
+    public getUserService(): UserServiceI {
+        return this.UserService;
     }
 }
