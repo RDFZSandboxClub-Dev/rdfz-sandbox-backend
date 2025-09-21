@@ -835,7 +835,7 @@ export class UserService implements UserServiceI {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 10;
             if (pageSize > this.appServer.getConfig().paginationMaxPageSize) pageSize = this.appServer.getConfig().paginationMaxPageSize;
-            this.appServer.getDatabase().getDataSource().getRepository(PointRecord).createQueryBuilder("pointRecord").leftJoinAndSelect("pointRecord.user", "user").where("user.id = :userId", { userId: id }).select(["pointRecord.id", "pointRecord.points", "pointRecord.description", "pointRecord.relatedEntityType", "pointRecord.relatedEntityId", "pointRecord.createdAt"]).orderBy("pointRecord.createdAt", "DESC").skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
+            this.appServer.getDatabase().getDataSource().getRepository(PointRecord).createQueryBuilder("pointRecord").leftJoinAndSelect("pointRecord.user", "user").where("user.id = :userId", { userId: id }).select(["pointRecord.points", "pointRecord.description", "pointRecord.relatedEntityType", "pointRecord.relatedEntityId", "pointRecord.createdAt"]).orderBy("pointRecord.createdAt", "DESC").skip((page - 1) * pageSize).take(pageSize).getManyAndCount().then((result) => {
                 res.statusCode = 200;
                 res.json(GenRes.success({ records: result[0], pagination: { total: result[1], page, limit: pageSize } }));
                 return;

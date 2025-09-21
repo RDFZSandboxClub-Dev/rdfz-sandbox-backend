@@ -1,5 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany, type Relation } from "typeorm"
 import { PointRecord } from "./PointRecord.js";
+import { Activity } from "./Activity.js";
+import { ActivityParticipation } from "./ActivityParticipation.js";
 
 @Entity()
 export class User {
@@ -45,6 +47,12 @@ export class User {
     @OneToMany('PointRecord', 'user')
     pointRecords: Relation<PointRecord>[];
 
+    @OneToMany('Activity', 'organizer')
+    activities: Relation<Activity>[];
+
     @Column("int")
     points: number;
+
+    @OneToMany('ActivityParticipation', 'user')
+    joinedActivities: Relation<ActivityParticipation>[];
 }

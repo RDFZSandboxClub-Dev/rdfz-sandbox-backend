@@ -20,6 +20,7 @@ export interface AppServerI {
     loadModules(): void;
     connectDb(): Promise<Result<undefined>>;
     getDatabase(): DatabaseI;
+    getUserService(): UserServiceI;
 }
 
 export interface ModuleI {
